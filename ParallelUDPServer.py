@@ -4,34 +4,37 @@ import random
 import os
 import base64
 
-class ParallelUDPClient: #Initialize the UDP server
-    def __init__(self, host, port, file_list, max_threads=4):
-        self.server_host = host
-        self.server_port = port
-        self.file_list = file_list
-        self.max_threads = max_threads
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.settimeout(5.0)
-        self.max_retries = 5
-        self.file_queue = Queue()
-        self.lock = threading.Lock()
 
-    def run(self):  #Start the server main loop
-        try:
-            with open(self.file_list, 'r', encoding='utf-8') as f:
-                filenames = [line.strip() for line in f if line.strip()]
-            for filename in filenames:
-                self.file_queue.put(filename)
-            threads = []
-            for _ in range(min(self.max_threads, len(filenames))):
-                t = threading.Thread(target=self.worker)
-                t.start()
-                threads.append(t)
-            for t in threads:
-                t.join()
-        except FileNotFoundError:
-            print(f"[Parallel Client] Error: File list {self.file_list} not found")
-        except Exception as e:
-            print(f"[Parallel Client] Error: {e}")
-        finally:
-            self.socket.close()
+class ParallelUDPServer: #Initializing TCP server
+    def __init__(self, port, max_workers=10):
+        self.server_port = port
+        self.max_workers = max_workers
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.server_socket.bind(('', port))
+        self.active_transfers = 0
+        self.lock = threading.Lock()
+        print(f"[Parallel Server] Started successfully, listening on port {port}")
+
+    def start(self): #Start the server
+        while True:
+            try:
+                data, client_addr = self.server_socket.recvfrom(1024)
+                message = data.decode().strip()
+                print(f"[Parallel Server] Received message from {client_addr}: {message}")
+
+                if message.startswith("DOWNLOAD"):
+                    with self.lock:
+                        if self.active_transfers >= self.max_workers:
+                            response = "ERR SERVER_BUSY"
+                            self.server_socket.sendto(response.encode(), client_addr)
+                            print(f"[Parallel Server] Request denied: reached max worker threads {self.max_workers}")
+                            continue
+                        self.active_transfers += 1
+
+                    threading.Thread(
+                        target=self.handle_download_request,
+                        args=(message, client_addr)
+                    ).start()
+
+            except Exception as e:
+                print(f"[Parallel Server] Error: {e}")
