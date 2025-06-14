@@ -69,3 +69,68 @@ class ParallelUDPClient:
             return
         with self.lock:
             print(f"[Parallel Client] File {filename} downloaded successfully")
+
+    def receive_file(self, filename, file_size, port):
+        # Create UDP socket for file transfer
+        transfer_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Set socket timeout to 10 seconds
+        transfer_socket.settimeout(10.0)
+        # Temporary filename
+        temp_filename = filename + ".download"
+        try:
+            # Open temporary file in binary write mode
+            with open(temp_filename, 'wb') as file:
+                total_received = 0
+                # Loop to receive file data until complete
+                while total_received < file_size:
+                    start = total_received
+                    end = min(start + 999, file_size - 1)
+                    # Maximum 5 attempts per data chunk
+                    for attempt in range(5):
+                        try:
+                            # Send file chunk request
+                            request = f"FILE {filename} GET START {start} END {end}"
+                            transfer_socket.sendto(request.encode(), (self.server_host, port))
+                            # Receive server response
+                            data, _ = transfer_socket.recvfrom(4096)
+                            response = data.decode()
+                            # Process response containing data
+                            if "DATA" in response:
+                                data_part = response.split("DATA ")[1]
+                                chunk = base64.b64decode(data_part.encode('utf-8'))
+                                # Verify received data length
+                                if len(chunk) == (end - start + 1):
+                                    # Write to file
+                                    file.write(chunk)
+                                    total_received += len(chunk)
+                                    # Print progress (using \r for single-line update)
+                                    with self.lock:
+                                        print(
+                                            f"\r[Progress {filename}] {total_received}/{file_size} ({total_received / file_size:.1%})",
+                                            end='', flush=True)
+                                    break  # Break retry loop after successful reception
+                        except socket.timeout:
+                            # Timeout handling: print retry message
+                            with self.lock:
+                                print(f"\n[Retry {filename}] Chunk {start}-{end} timeout ({attempt + 1}/5)")
+                            continue  # Continue retry
+            # Check if file is fully received
+            if total_received == file_size:
+                # Replace if target exists, otherwise rename
+                if os.path.exists(filename):
+                    os.replace(temp_filename, filename)
+                else:
+                    os.rename(temp_filename, filename)
+                return True  # Return success
+            return False  # Return failure if incomplete
+        except Exception as e:
+            # Exception handling: print error message
+            with self.lock:
+                print(f"\n[Critical Error {filename}] {str(e)}")
+            return False
+        finally:
+            # Cleanup operations that always execute
+            transfer_socket.close()  # Close socket
+            # Remove temp file if exists (for failure cleanup)
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
