@@ -134,3 +134,7 @@ class ParallelUDPClient:
             # Remove temp file if exists (for failure cleanup)
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
+
+    def send_with_retry(self, message, address, response_validator):
+        retry_count = 0
+        while retry_count < self.max_retries:
